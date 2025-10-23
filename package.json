@@ -1,0 +1,39 @@
+{
+  "name": "ludo-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.12.2",
+    "pixi.js": "^8.14.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^6.30.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.22",
+    "globals": "^16.4.0",
+    "vite": "^5.4.0"
+  },
+  "overrides": {
+    "vite": "^5.4.0"
+  },
+  "description": "src/ ├─ api/               # axios API calls │   ├─ auth.js │   ├─ rooms.js │   └─ wallet.js ├─ components/ │   ├─ Board.jsx       # PixiJS board & token rendering │   ├─ WalletView.jsx │   ├─ RoomList.jsx │   ├─ RoomCard.jsx │   ├─ DiceRoll.jsx │   └─ Token.jsx ├─ context/ │   ├─ AuthContext.jsx │   └─ SocketContext.jsx ├─ hooks/ │   └─ useSocket.js ├─ pages/ │   ├─ Login.jsx │   ├─ Dashboard.jsx │   ├─ GameRoom.jsx │   ├─ Wallet.jsx │   └─ Admin.jsx ├─ utils/ │   └─ helpers.js ├─ App.jsx └─ main.jsx",
+  "main": "eslint.config.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
