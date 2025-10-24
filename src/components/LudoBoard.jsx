@@ -1,19 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { io } from "socket.io-client";
 import { useNavigate } from "react-router-dom";
 import { useLudoSocket } from "../hooks/useLudoSocket";
-// ✅ Import board constants
-import { BOARD_SIZE, TILE_SIZE, COLORS } from "../constants/boardConfig";
+import { BOARD_SIZE, TILE_SIZE } from "../constants/boardConfig";
 import { getTileProps } from "../utils/getTileProps";
 
 const LudoBoard = () => {
   const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
-  // --- Use the custom socket hook ---
   const {
+    socket,
     connected,
-    joinedRoom,
+    joinedRoom: hookJoinedRoom,
     availableRooms,
     joinedUsers,
     dice,
@@ -24,20 +22,86 @@ const LudoBoard = () => {
     rollDice,
   } = useLudoSocket(token, navigate);
 
+  // --- Local state for room form and joined room ---
   const [roomForm, setRoomForm] = useState({ stake: 10, mode: "classic", maxPlayers: 4 });
+  const [joinedRoom, setJoinedRoom] = useState(hookJoinedRoom);
+  const [isRolling, setIsRolling] = useState(false);
 
+  // --- Sync local joinedRoom with hook updates ---
+  useEffect(() => {
+    setJoinedRoom(hookJoinedRoom);
+  }, [hookJoinedRoom]);
 
+  const myUser = JSON.parse(localStorage.getItem("user"));
+  const myUserId = myUser?._id;
 
-  // --- Render Board Cells ---
+  const gamePlayers = joinedRoom?.players || [];
+  const currentTurnIndex = joinedRoom?.gameState?.turnOrder?.[0] ?? 0;
+  const isMyTurn = gamePlayers[currentTurnIndex]?.userId?.toString() === myUserId;
+
+  // --- Roll Dice Handler ---
+  const rollDiceHandler = () => {
+    if (!isMyTurn || isRolling) return;
+    setIsRolling(true);
+
+    const rolledNumber = Math.floor(Math.random() * 6) + 1;
+
+    // Update local room state
+    setJoinedRoom(prev => ({
+      ...prev,
+      gameState: {
+        ...prev.gameState,
+        lastRoll: rolledNumber,
+        turnIndex: (currentTurnIndex + 1) % gamePlayers.length,
+      },
+    }));
+
+    // Notify server
+    rollDice(rolledNumber);
+    setIsRolling(false);
+  };
+
+  // --- Socket listeners ---
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on("room:update", updatedRoom => {
+      setJoinedRoom(updatedRoom);
+    });
+
+    socket.on("turn:change", ({ nextTurnIndex }) => {
+      setJoinedRoom(prev => ({
+        ...prev,
+        gameState: {
+          ...prev.gameState,
+          turnIndex: nextTurnIndex
+        }
+      }));
+    });
+
+    socket.on("turn:bonus_roll", ({ userId }) => {
+      setJoinedRoom(prev => ({
+        ...prev,
+        gameState: {
+          ...prev.gameState,
+          turnIndex: prev.gameState.players.findIndex(p => p.userId === userId)
+        }
+      }));
+    });
+
+    return () => {
+      socket.off("room:update");
+      socket.off("turn:change");
+      socket.off("turn:bonus_roll");
+    };
+  }, [socket]);
+
+  // --- Render Board ---
   const renderBoard = () => {
     const cells = [];
     for (let row = 0; row < BOARD_SIZE; row++) {
       for (let col = 0; col < BOARD_SIZE; col++) {
         const { color, text, type } = getTileProps(row, col);
-
-        // This is a simplified Ludo board rendering. For a full Ludo game, 
-        // you would need to render the triangle inside the center 3x3 block 
-        // and draw home tokens inside the base boxes.
         cells.push(
           <div
             key={`${row}-${col}`}
@@ -48,20 +112,16 @@ const LudoBoard = () => {
               ${type === 'base' ? 'text-white text-lg font-extrabold' : 'text-gray-800'}
             `}
             style={{
-              // Special styling for the center triangles
               ...(row >= 6 && row <= 8 && col >= 6 && col <= 8) && {
                 clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)',
                 backgroundColor: 'transparent',
                 transform: `rotate(${(row === 6 && col === 7) ? 90 :
                   (row === 7 && col === 8) ? 180 :
-                    (row === 8 && col === 7) ? 270 :
-                      (row === 7 && col === 6) ? 0 :
-                        0
-                  }deg)`
+                  (row === 8 && col === 7) ? 270 :
+                  (row === 7 && col === 6) ? 0 : 0}deg)`
               }
             }}
           >
-            {/* The four main base cells are drawn as large blocks covering the 6x6 area */}
             {type === 'base' && text && <span className="text-xl">{text}</span>}
             {type === 'startPoint' && <span className="text-xl">{text}</span>}
           </div>
@@ -71,11 +131,9 @@ const LudoBoard = () => {
     return cells;
   };
 
-
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-6 font-sans">
-
-      {/* Logout Button */}
+      {/* Logout */}
       <div className="flex justify-end mb-4">
         <button
           onClick={logout}
@@ -95,7 +153,7 @@ const LudoBoard = () => {
                 <div className="bg-white rounded-xl shadow-xl p-5 border border-gray-200">
                   <h2 className="text-2xl font-bold mb-4 text-indigo-600">🏠 Join a Room</h2>
                   <ul className="space-y-3">
-                    {availableRooms.map((room) => (
+                    {availableRooms.map(room => (
                       <li
                         key={room.roomId}
                         className="flex justify-between items-center p-3 bg-gray-50 border border-gray-200 rounded-lg hover:shadow-md transition duration-150"
@@ -123,16 +181,12 @@ const LudoBoard = () => {
                     type="number"
                     placeholder="Stake"
                     value={roomForm.stake}
-                    onChange={(e) =>
-                      setRoomForm({ ...roomForm, stake: Number(e.target.value) })
-                    }
+                    onChange={(e) => setRoomForm({ ...roomForm, stake: Number(e.target.value) })}
                     className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
                   />
                   <select
                     value={roomForm.mode}
-                    onChange={(e) =>
-                      setRoomForm({ ...roomForm, mode: e.target.value })
-                    }
+                    onChange={(e) => setRoomForm({ ...roomForm, mode: e.target.value })}
                     className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-white"
                   >
                     <option value="classic">Classic</option>
@@ -142,16 +196,11 @@ const LudoBoard = () => {
                     type="number"
                     placeholder="Max Players"
                     value={roomForm.maxPlayers}
-                    onChange={(e) =>
-                      setRoomForm({
-                        ...roomForm,
-                        maxPlayers: Number(e.target.value),
-                      })
-                    }
+                    onChange={(e) => setRoomForm({ ...roomForm, maxPlayers: Number(e.target.value) })}
                     className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
                   />
                   <button
-                    onClick={createRoom}
+                    onClick={() => createRoom(roomForm)}
                     className="bg-purple-600 text-white px-4 py-3 rounded-lg shadow-md hover:bg-purple-700 col-span-1 md:col-span-2 font-bold transition duration-150"
                   >
                     Create Room
@@ -161,8 +210,9 @@ const LudoBoard = () => {
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-2xl p-6 border-4 border-gray-300">
-              {/* Ludo Board Container with Custom Grid */}
-              <h2 className="text-3xl font-bold mb-6 text-green-700 text-center">Ludo Board ({joinedRoom.roomId})</h2>
+              <h2 className="text-3xl font-bold mb-6 text-green-700 text-center">
+                Ludo Board ({joinedRoom.roomId})
+              </h2>
               <div
                 className="mx-auto border-4 border-gray-800 rounded-xl overflow-hidden shadow-inner"
                 style={{
@@ -177,10 +227,10 @@ const LudoBoard = () => {
                 {renderBoard()}
               </div>
 
-
               <div className="flex justify-center items-center gap-4 mt-6 p-4 bg-gray-100 rounded-xl shadow-inner">
                 <button
-                  onClick={rollDice}
+                  onClick={rollDiceHandler}
+                  disabled={!isMyTurn || isRolling}
                   className="bg-yellow-500 text-black px-6 py-3 rounded-xl font-extrabold text-lg shadow-lg hover:bg-yellow-600 transition duration-150 transform hover:scale-105"
                 >
                   🎲 Roll Dice
@@ -200,7 +250,9 @@ const LudoBoard = () => {
         <div className="flex flex-col gap-4 w-full lg:w-72 flex-shrink-0">
           {joinedRoom && (
             <div className="bg-white rounded-xl shadow-xl p-5 border border-gray-200">
-              <h2 className="text-xl font-bold mb-3 text-green-600">Players in Room: {joinedRoom.roomId}</h2>
+              <h2 className="text-xl font-bold mb-3 text-green-600">
+                Players in Room: {joinedRoom.roomId}
+              </h2>
               <ul className="space-y-2">
                 {joinedUsers.map((user, idx) => (
                   <li key={idx} className="p-3 bg-green-50 rounded-lg border border-green-200 shadow-sm text-gray-800">
@@ -220,9 +272,7 @@ const LudoBoard = () => {
             <h2 className="text-xl font-bold mb-3 text-blue-600">Activity Log</h2>
             <div className="space-y-1 text-sm">
               {messages.slice(-10).map((msg, idx) => (
-                <p key={idx} className="text-gray-700 border-b border-gray-100 py-1">
-                  {msg}
-                </p>
+                <p key={idx} className="text-gray-700 border-b border-gray-100 py-1">{msg}</p>
               ))}
             </div>
           </div>

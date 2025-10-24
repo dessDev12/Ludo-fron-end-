@@ -9,6 +9,7 @@ export const useLudoSocket = (token, navigate) => {
   const [joinedUsers, setJoinedUsers] = useState([]);
   const [dice, setDice] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [isRolling, setIsRolling] = useState(false);
 
   useEffect(() => {
     if (!token) return navigate("/login");
@@ -41,10 +42,16 @@ export const useLudoSocket = (token, navigate) => {
       );
     });
 
+
     s.on("game:start", ({ gameId, gameState }) => {
-      setMessages((prev) => [...prev, `Game started: ${gameId}`]);
-      setJoinedRoom((prev) => (prev ? { ...prev, gameId } : { gameId, ...gameState }));
+      setJoinedRoom(prev => prev
+        ? { ...prev, gameId, gameState, status: 'playing' }
+        : { ...gameState, gameId, status: 'playing' }
+      );
+      setMessages(prev => [...prev, `Game started: ${gameId}`]);
     });
+
+
 
     s.on("dice:result", ({ userId, value }) => {
       setDice(value);
@@ -79,7 +86,30 @@ export const useLudoSocket = (token, navigate) => {
     },
     [socket]
   );
+// --- Add moveToken Action ---
+const moveToken = useCallback(
+  (payload) => {
+    if (!socket || !joinedRoom || dice === null) return;
 
+    // Payload should contain: { gameId, tokenIndex, diceValue }
+    socket.emit(
+      "token:move",
+      { ...payload, diceValue: dice }, // Send the dice value from state
+      (res) => {
+        if (!res.ok) {
+          console.error("Move failed:", res.message);
+          setMessages((prev) => [
+            ...prev,
+            `Move failed: ${res.message}`,
+          ]);
+        }
+        // Client waits for 'room:update' or 'turn:change' to see the result
+        setDice(null); // Clear the dice after a move attempt
+      }
+    );
+  },
+  [socket, joinedRoom, dice]
+);
   const joinRoom = useCallback(
     (roomId) => {
       if (!socket) return;
@@ -95,21 +125,43 @@ export const useLudoSocket = (token, navigate) => {
     },
     [socket]
   );
+  const updateRoom = (updatedData) => {
+    if (!socket || !joinedRoom) return;
+
+    // Emit update to server
+    socket.emit("room:update", { roomId: joinedRoom.roomId, ...updatedData });
+
+    // Optimistically update local state
+    setJoinedRoom((prev) => ({
+      ...prev,
+      ...updatedData,
+    }));
+  };
+
+
 
   const rollDice = useCallback(() => {
-    if (!socket || !joinedRoom) return;
-    if (!joinedRoom.gameId) {
-      setMessages((prev) => [...prev, "Error: Game has not started yet"]);
+    if (!socket || !joinedRoom || isRolling) return;
+
+    setIsRolling(true);
+
+    const gameId = joinedRoom.gameId;
+    if (!gameId) {
+      setMessages(prev => [...prev, "Error: Game has not started yet"]);
+      setIsRolling(false);
       return;
     }
-    socket.emit("dice:roll", { roomId: joinedRoom.roomId, gameId: joinedRoom._id }, (res) => {
+
+    socket.emit("dice:roll", { roomId: joinedRoom.roomId, gameId }, (res) => {
+      setIsRolling(false);  // ✅ works here
+
       if (!res.ok) {
-        console.error("Dice roll error:", res.message);
-        setMessages((prev) => [...prev, `Error rolling dice: ${res.message}`]);
+        setMessages(prev => [...prev, `Error rolling dice: ${res.message}`]);
+      } else {
+        setDice(res.dice);
       }
     });
-  }, [socket, joinedRoom]);
-
+  }, [socket, joinedRoom, isRolling]);
   return {
     socket,
     connected,
@@ -122,5 +174,8 @@ export const useLudoSocket = (token, navigate) => {
     createRoom,
     joinRoom,
     rollDice,
+    updateRoom,
+    moveToken,
+    isRolling, 
   };
 };
